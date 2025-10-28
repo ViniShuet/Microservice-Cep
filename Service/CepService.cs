@@ -30,16 +30,26 @@ namespace Service
 
             var existing = await _cepRepository.GetCepByCodeAsync(normalized);
             if (existing != null)
+            {
+                _logger.LogInformation("CEP {CepCode} encontrado no repositório.", normalized);
                 return existing;
+            }
 
             var client = _httpClientFactory.CreateClient();
             var url = $"https://viacep.com.br/ws/{normalized}/json/";
+            _logger.LogInformation("Consultando API ViaCEP: {Url}", url);
 
             var response = await client.GetStringAsync(url);
-            var viaCepResponse = JsonSerializer.Deserialize<Cep>(response);
+            var viaCepResponse = JsonSerializer.Deserialize<Cep>(response, new JsonSerializerOptions
+            {
+                PropertyNameCaseInsensitive = true
+            });
 
             if (viaCepResponse == null)
+            {
+                _logger.LogError("Resposta nula da API ViaCEP para o CEP {CepCode}.", normalized);
                 throw new InvalidOperationException("Resposta inválida da API ViaCEP.");
+            }
 
             viaCepResponse.DataConsulta = DateTime.UtcNow;
             await _cepRepository.AddCepAsync(viaCepResponse);
@@ -49,17 +59,8 @@ namespace Service
 
         public async Task<IEnumerable<Cep>> GetAllCepsAsync()
         {
+            _logger.LogInformation("Buscando todos os CEPs no repositório.");
             return await _cepRepository.GetAllCepsAsync();
-        }
-
-        Task<Cep> ICepService.ConsultarCepAsync(string cep)
-        {
-            throw new NotImplementedException();
-        }
-
-        Task<IEnumerable<Cep>> ICepService.GetAllCepsAsync()
-        {
-            throw new NotImplementedException();
         }
     }
 }

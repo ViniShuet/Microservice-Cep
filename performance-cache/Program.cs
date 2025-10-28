@@ -5,17 +5,20 @@ using System.Net;
 var builder = WebApplication.CreateBuilder(args);
 
 // Add services to the container.
-
 builder.Services.AddControllers();
-// Learn more about configuring Swagger/OpenAPI at https://aka.ms/aspnetcore/swashbuckle
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
 
+// Registrar o CepRepository com HttpClient
+builder.Services.AddHttpClient<ICepRepository, CepRepository>();
+
+// Registrar o CepService
+builder.Services.AddScoped<ICepService, CepService>();
+
 builder.Services.AddScoped<IVehicleRepository, VehicleRepository>(provider =>
 {
-    var connectionString = builder.Configuration.GetConnectionString("DefaultConnection") 
+    var connectionString = builder.Configuration.GetConnectionString("DefaultConnection")
                            ?? "Server=localhost;Database=fiap;User=root;Password=123;Port=3306;";
-    
     return new VehicleRepository(connectionString);
 });
 
@@ -58,9 +61,6 @@ app.UseExceptionHandler(errorApp =>
 });
 
 app.UseHttpsRedirection();
-
 app.UseAuthorization();
-
 app.MapControllers();
-
 app.Run();

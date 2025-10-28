@@ -1,92 +1,108 @@
 ﻿using System;
-using System.Collections.Generic;
+using System.Net.Http;
+using System.Text.Json;
 using System.Text.RegularExpressions;
 using System.Threading.Tasks;
-using Dapper;
 using Domain;
-using MySqlConnector;
+using Microsoft.Extensions.Logging; // Adicionado para usar o logger
 
 namespace Repository
 {
     public class CepRepository : ICepRepository
     {
-        private readonly MySqlConnection _connection;
+        private readonly HttpClient _httpClient;
+        private readonly ILogger<CepRepository> _logger; // Logger adicionado
 
-        public CepRepository(string connectionString)
+        public CepRepository(HttpClient httpClient, ILogger<CepRepository> logger)
         {
-            if (string.IsNullOrWhiteSpace(connectionString))
-                throw new ArgumentNullException(nameof(connectionString), "A string de conexão não pode ser nula ou vazia.");
-
-            _connection = new MySqlConnection(connectionString);
+            _httpClient = httpClient ?? throw new ArgumentNullException(nameof(httpClient));
+            _logger = logger ?? throw new ArgumentNullException(nameof(logger));
         }
 
         public async Task<int> AddCepAsync(Cep cep)
         {
-            if (cep == null)
-                throw new ArgumentNullException(nameof(cep), "O objeto CEP não pode ser nulo.");
-
-            await _connection.OpenAsync();
-            try
-            {
-                const string sql = @"
-                    INSERT INTO cep (cep, logradouro, complemento, bairro, localidade, uf, ibge, gia, ddd, siafi, dataconsulta)
-                    VALUES (@Cep, @Logradouro, @Complemento, @Bairro, @Localidade, @Uf, @Ibge, @Gia, @Ddd, @Siafi, @DataConsulta);
-                    SELECT LAST_INSERT_ID();
-                ";
-
-                var id = await _connection.ExecuteScalarAsync<int>(sql, cep);
-                return id;
-            }
-            finally
-            {
-                await _connection.CloseAsync();
-            }
+            throw new NotImplementedException("Este método não é necessário para a integração com a API ViaCEP.");
         }
 
         public async Task<IEnumerable<Cep>> GetAllCepsAsync()
         {
-            await _connection.OpenAsync();
-            try
-            {
-                const string sql = @"
-                    SELECT id AS Id, cep AS Cep, logradouro AS Logradouro, complemento AS Complemento, bairro AS Bairro,
-                           localidade AS Localidade, uf AS Uf, ibge AS Ibge, gia AS Gia, ddd AS Ddd, siafi AS Siafi, dataconsulta AS DataConsulta
-                    FROM cep;
-                ";
-
-                var ceps = await _connection.QueryAsync<Cep>(sql);
-                return ceps;
-            }
-            finally
-            {
-                await _connection.CloseAsync();
-            }
+            throw new NotImplementedException("Este método não é necessário para a integração com a API ViaCEP.");
         }
 
         public async Task<Cep?> GetCepByCodeAsync(string cep)
         {
             if (string.IsNullOrWhiteSpace(cep))
+            {
+                _logger.LogWarning("CEP fornecido é nulo ou vazio.");
                 throw new ArgumentException("O CEP não pode ser nulo ou vazio.", nameof(cep));
+            }
 
+            // Normaliza o CEP (remove caracteres não numéricos)
             var normalized = Regex.Replace(cep, @"\D", "");
+            if (normalized.Length != 8)
+            {
+                _logger.LogWarning("CEP fornecido ({Cep}) não contém exatamente 8 dígitos.", cep);
+                throw new ArgumentException("O CEP deve conter exatamente 8 dígitos.", nameof(cep));
+            }
 
-            await _connection.OpenAsync();
+            // Monta a URL da API ViaCEP
+            var url = $"https://viacep.com.br/ws/{normalized}/json/";
+            _logger.LogInformation("Consultando API ViaCEP com a URL: {Url}", url);
+
             try
             {
-                const string sql = @"
-                    SELECT id AS Id, cep AS Cep, logradouro AS Logradouro, complemento AS Complemento, bairro AS Bairro,
-                           localidade AS Localidade, uf AS Uf, ibge AS Ibge, gia AS Gia, ddd AS Ddd, siafi AS Siafi, dataconsulta AS DataConsulta
-                    FROM cep
-                    WHERE cep = @Cep
-                    LIMIT 1;
-                ";
+                // Faz a requisição para a API ViaCEP
+                var response = await _httpClient.GetAsync(url);
+                _logger.LogInformation("Resposta da API ViaCEP recebida com status: {StatusCode}", response.StatusCode);
 
-                var result = await _connection.QueryFirstOrDefaultAsync<Cep>(sql, new { Cep = normalized });
-                return result;
+                response.EnsureSuccessStatusCode();
+
+                // Lê e desserializa a resposta JSON
+                var jsonResponse = await response.Content.ReadAsStringAsync();
+                _logger.LogDebug("Resposta JSON da API ViaCEP: {JsonResponse}", jsonResponse);
+
+                var viaCepResponse = JsonSerializer.Deserialize<Cep>(jsonResponse, new JsonSerializerOptions
+                {
+                    PropertyNameCaseInsensitive = true
+                });
+
+                if (viaCepResponse == null)
+                {
+                    _logger.LogError("A resposta da API ViaCEP é nula.");
+                    throw new InvalidOperationException("A resposta da API ViaCEP é inválida.");
+                }
+
+                // Valida os campos obrigatórios
+                if (string.IsNullOrWhiteSpace(viaCepResponse.CepCode) ||
+                    string.IsNullOrWhiteSpace(viaCepResponse.Logradouro) ||
+                    string.IsNullOrWhiteSpace(viaCepResponse.Bairro) ||
+                    string.IsNullOrWhiteSpace(viaCepResponse.Localidade) ||
+                    string.IsNullOrWhiteSpace(viaCepResponse.Uf))
+                {
+                    _logger.LogError("A resposta da API ViaCEP não contém todos os campos obrigatórios. Resposta: {ViaCepResponse}", viaCepResponse);
+                    throw new InvalidOperationException("A resposta da API ViaCEP não contém todos os campos obrigatórios.");
+                }
+
+                // Define a data da consulta
+                viaCepResponse.DataConsulta = DateTime.UtcNow;
+                _logger.LogInformation("Consulta ao CEP {CepCode} realizada com sucesso.", viaCepResponse.CepCode);
+
+                return viaCepResponse;
             }
-            finally
+            catch (HttpRequestException ex)
             {
-                await _connection.CloseAsync();
+                _logger.LogError(ex, "Erro ao conectar à API ViaCEP.");
+                throw new InvalidOperationException($"Erro ao conectar à API ViaCEP: {ex.Message}", ex);
+            }
+            catch (JsonException ex)
+            {
+                _logger.LogError(ex, "Erro ao desserializar a resposta da API ViaCEP.");
+                throw new InvalidOperationException($"Erro ao desserializar a resposta da API ViaCEP: {ex.Message}", ex);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Erro inesperado ao consultar a API ViaCEP.");
+                throw new InvalidOperationException($"Erro inesperado ao consultar a API ViaCEP: {ex.Message}", ex);
             }
         }
     }
