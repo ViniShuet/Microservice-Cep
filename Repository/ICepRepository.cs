@@ -1,8 +1,10 @@
-﻿using Domain;
+﻿using System.Collections.Generic;
+using System.Threading.Tasks;
+using Domain;
 
 namespace Repository
 {
-    internal interface ICepRepository
+    public interface ICepRepository
     {
         Task<int> AddCepAsync(Cep cep);
         Task<IEnumerable<Cep>> GetAllCepsAsync();

@@ -8,82 +8,86 @@ using MySqlConnector;
 
 namespace Repository
 {
-    internal class CepRepository : ICepRepository
+    public class CepRepository : ICepRepository
     {
-        private readonly string _connectionString;
+        private readonly MySqlConnection _connection;
 
         public CepRepository(string connectionString)
         {
-            _connectionString = connectionString ?? throw new ArgumentNullException(nameof(connectionString));
+            if (string.IsNullOrWhiteSpace(connectionString))
+                throw new ArgumentNullException(nameof(connectionString), "A string de conexão não pode ser nula ou vazia.");
+
+            _connection = new MySqlConnection(connectionString);
         }
 
-        private MySqlConnection CreateConnection() => new MySqlConnection(_connectionString);
-
-        /// <summary>
-        /// Insere um CEP no banco e retorna o id gerado.
-        /// </summary>
         public async Task<int> AddCepAsync(Cep cep)
         {
             if (cep == null)
-                throw new ArgumentNullException(nameof(cep), "CEP inválido.");
+                throw new ArgumentNullException(nameof(cep), "O objeto CEP não pode ser nulo.");
 
-            // Normaliza o código do CEP (remove caracteres não numéricos)
-            if (!string.IsNullOrWhiteSpace(cep.Code))
-                cep.Code = Regex.Replace(cep.Code, @"\D", "");
+            await _connection.OpenAsync();
+            try
+            {
+                const string sql = @"
+                    INSERT INTO cep (cep, logradouro, complemento, bairro, localidade, uf, ibge, gia, ddd, siafi, dataconsulta)
+                    VALUES (@Cep, @Logradouro, @Complemento, @Bairro, @Localidade, @Uf, @Ibge, @Gia, @Ddd, @Siafi, @DataConsulta);
+                    SELECT LAST_INSERT_ID();
+                ";
 
-            await using var conn = CreateConnection();
-            await conn.OpenAsync();
-
-            const string sql = @"
-                INSERT INTO cep (code, street, neighborhood, city, state)
-                VALUES (@Code, @Street, @Neighborhood, @City, @State);
-                SELECT LAST_INSERT_ID();
-            ";
-
-            var id = await conn.ExecuteScalarAsync<int>(sql, cep);
-            return id;
+                var id = await _connection.ExecuteScalarAsync<int>(sql, cep);
+                return id;
+            }
+            finally
+            {
+                await _connection.CloseAsync();
+            }
         }
 
-        /// <summary>
-        /// Retorna todos os CEPs salvos.
-        /// </summary>
         public async Task<IEnumerable<Cep>> GetAllCepsAsync()
         {
-            await using var conn = CreateConnection();
-            await conn.OpenAsync();
+            await _connection.OpenAsync();
+            try
+            {
+                const string sql = @"
+                    SELECT id AS Id, cep AS Cep, logradouro AS Logradouro, complemento AS Complemento, bairro AS Bairro,
+                           localidade AS Localidade, uf AS Uf, ibge AS Ibge, gia AS Gia, ddd AS Ddd, siafi AS Siafi, dataconsulta AS DataConsulta
+                    FROM cep;
+                ";
 
-            const string sql = @"
-                SELECT id AS Id, code AS Code, street AS Street, neighborhood AS Neighborhood, city AS City, state AS State
-                FROM cep;
-            ";
-
-            var ceps = await conn.QueryAsync<Cep>(sql);
-            return ceps;
+                var ceps = await _connection.QueryAsync<Cep>(sql);
+                return ceps;
+            }
+            finally
+            {
+                await _connection.CloseAsync();
+            }
         }
 
-        /// <summary>
-        /// Busca um CEP pelo código (aceita formatos com ou sem máscara).
-        /// Retorna null se não encontrado.
-        /// </summary>
         public async Task<Cep?> GetCepByCodeAsync(string cep)
         {
             if (string.IsNullOrWhiteSpace(cep))
-                throw new ArgumentException("CEP inválido.", nameof(cep));
+                throw new ArgumentException("O CEP não pode ser nulo ou vazio.", nameof(cep));
 
             var normalized = Regex.Replace(cep, @"\D", "");
 
-            await using var conn = CreateConnection();
-            await conn.OpenAsync();
+            await _connection.OpenAsync();
+            try
+            {
+                const string sql = @"
+                    SELECT id AS Id, cep AS Cep, logradouro AS Logradouro, complemento AS Complemento, bairro AS Bairro,
+                           localidade AS Localidade, uf AS Uf, ibge AS Ibge, gia AS Gia, ddd AS Ddd, siafi AS Siafi, dataconsulta AS DataConsulta
+                    FROM cep
+                    WHERE cep = @Cep
+                    LIMIT 1;
+                ";
 
-            const string sql = @"
-                SELECT id AS Id, code AS Code, street AS Street, neighborhood AS Neighborhood, city AS City, state AS State
-                FROM cep
-                WHERE code = @Code
-                LIMIT 1;
-            ";
-
-            var result = await conn.QueryFirstOrDefaultAsync<Cep>(sql, new { Code = normalized });
-            return result;
+                var result = await _connection.QueryFirstOrDefaultAsync<Cep>(sql, new { Cep = normalized });
+                return result;
+            }
+            finally
+            {
+                await _connection.CloseAsync();
+            }
         }
     }
 }
